@@ -1,0 +1,50 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  langchain-1:
+    name: LangChain 1.x (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[middleware,test]"
+      - run: pytest -q tests
+
+  agentkit:
+    name: LangChain 0.3 + Coinbase AgentKit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # solana is pinned because coinbase-agentkit 0.7.4 fails to import with solana 0.40.x
+      - run: pip install -e ".[test]" "coinbase-agentkit-langchain==0.7.0" "solana>=0.36.6,<0.37"
+      - run: pytest -q tests
+        env:
+          DO_NOT_TRACK: "1"
+
+  wheel:
+    name: built wheel in a clean environment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build && python -m build
+      - run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install "$(ls dist/*.whl)[middleware]" pytest
+          mv src /tmp/src_hidden
+          /tmp/clean/bin/python -m pytest -q tests
