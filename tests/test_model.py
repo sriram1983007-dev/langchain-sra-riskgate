@@ -80,3 +80,10 @@ def test_parse_verdict_strictness():
     assert parse_verdict(json.dumps({**GOOD, "extra": 1})) is None
     assert parse_verdict(json.dumps({**GOOD, "risk_level": "meh"})) is None
     assert parse_verdict("no json") is None
+
+
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://h/v1", "gopher://x"])
+def test_non_http_base_url_refused(url):
+    from langchain_sra_riskgate import OpenAICompatibleModelCheck
+    with pytest.raises(ValueError):
+        OpenAICompatibleModelCheck(lambda i, a: ({}, {}, {}), base_url=url)

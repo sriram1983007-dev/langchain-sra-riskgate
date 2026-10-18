@@ -3,7 +3,7 @@ from .gate import AGENTKIT_EXTRACTORS, GateDecision, PaymentGate, PaymentIntent
 from .model import OpenAICompatibleModelCheck
 from .tools import guard_tools
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "AGENTKIT_EXTRACTORS",

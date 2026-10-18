@@ -89,6 +89,8 @@ class OpenAICompatibleModelCheck:
     ):
         self.build_input = build_input
         self.base_url = (base_url or os.environ.get("SRA_BASE_URL", "http://localhost:11434/v1")).rstrip("/")
+        if self.base_url.strip().lower().split(":", 1)[0] not in ("http", "https"):
+            raise ValueError("base_url / SRA_BASE_URL must be an http:// or https:// URL.")
         self.model = model or os.environ.get("SRA_MODEL", "sriram1983007/sra-riskgate")
         self.api_key = api_key or os.environ.get("SRA_API_KEY", "none")
         self.timeout = float(timeout or os.environ.get("SRA_TIMEOUT", "120"))

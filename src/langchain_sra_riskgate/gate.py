@@ -15,6 +15,8 @@ from typing import Any, Callable, Iterable, Mapping, Optional
 from urllib.parse import urlparse
 
 from sra_riskgate.chains import USDC_ADDRESSES, USDC_DECIMALS, chain_id_from_network, is_usdc
+from sra_riskgate.payload_claims import FLAG as CLAIMS_FLAG, scan_payload_claims
+from sra_riskgate.sanctions import SanctionsList
 
 APPROVE, HOLD, REJECT = "approve", "hold", "reject"
 
@@ -153,6 +155,23 @@ def _x402_direct(tool: str, args: Mapping[str, Any], chain_id: Optional[int]) ->
     return PaymentIntent(tool, "x402_unpriced", None, None, "USDC", chain_id, _get(args, "url"))
 
 
+_X402_TEXT_FIELDS = ("description", "extra", "resource", "mime_type", "mimeType", "output_schema", "outputSchema")
+
+
+def _claims_target(intent: "PaymentIntent", args: Mapping[str, Any]) -> Any:
+    """The untrusted, payment-describing part of the arguments.
+
+    For x402 calls that is the seller's payment option (description, extra, ...), not the
+    agent's own request (url, headers, query, body), which may legitimately discuss compliance.
+    """
+    if intent.kind == "x402_unpriced":
+        return {}
+    if intent.kind == "x402_payment":
+        opt = _get(args, "selected_payment_option") or args
+        return {k: _get(opt, k) for k in _X402_TEXT_FIELDS}
+    return args
+
+
 Extractor = Callable[[str, Mapping[str, Any], Optional[int]], PaymentIntent]
 
 #: Coinbase AgentKit (Python) tool names, as produced by ``get_langchain_tools``.
@@ -197,6 +216,12 @@ class PaymentGate:
         strict: Hold money-like tools (transfer, swap, pay, ...) that have no extractor.
         passthrough_tools: Tool names never gated, even in strict mode.
         on_decision: Called with every :class:`GateDecision`, e.g. for an audit log.
+        check_payload_claims: Hold payments whose tool arguments (memo, description, x402
+            ``extra`` ...) claim their own verification, e.g. "risk level: low (verified offline)".
+        check_sanctions: Reject payments to the recipient, or from ``wallet_address``, when the
+            address is on the OFAC SDN list (exact match against the dated snapshot bundled with
+            sra-riskgate; not a screening service). On by default.
+        sanctions_list: A fresher ``sra_riskgate.SanctionsList`` to use instead of the bundled one.
     """
 
     def __init__(
@@ -218,6 +243,9 @@ class PaymentGate:
         strict: bool = True,
         passthrough_tools: Iterable[str] = (),
         on_decision: Optional[Callable[[GateDecision], None]] = None,
+        check_payload_claims: bool = True,
+        check_sanctions: bool = True,
+        sanctions_list: Optional[SanctionsList] = None,
     ):
         self.max_amount = _decimal(max_amount_usdc, "max_amount_usdc")
         self.session_budget = (
@@ -239,6 +267,11 @@ class PaymentGate:
         self.strict = strict
         self.passthrough = {t.lower() for t in passthrough_tools}
         self.on_decision = on_decision
+        self.check_claims = check_payload_claims
+        if sanctions_list is not None and not isinstance(sanctions_list, SanctionsList):
+            raise ValueError("sanctions_list must be a sra_riskgate.SanctionsList.")
+        self.check_sanctions = bool(check_sanctions)
+        self._sanctions_list = sanctions_list
         self._lock = threading.Lock()
         self._spent = Decimal(0)
 
@@ -303,8 +336,17 @@ class PaymentGate:
         def stop(decision: str, flag: str, why: str) -> GateDecision:
             return GateDecision(decision, (flag,), why, intent)
 
+        claims = scan_payload_claims(_claims_target(intent, args)) if self.check_claims else []
+
+        def claims_hold() -> GateDecision:
+            return stop(HOLD, CLAIMS_FLAG,
+                        f"The payment arguments claim their own verification ({claims[0].match!r}); "
+                        "a payer cannot grade its own risk.")
+
         # x402 one-step requests: no recipient or amount yet.
         if intent.kind == "x402_unpriced":
+            if claims:
+                return claims_hold()
             host = (urlparse(str(intent.url or "")).hostname or "").lower()
             if host and host in self.x402_hosts:
                 return self._finish(intent, args, Decimal(0))
@@ -313,6 +355,15 @@ class PaymentGate:
                         "use the two-step x402 flow or add the host to allowed_x402_hosts.")
 
         recipient = _addr(intent.recipient)
+        if self.check_sanctions:
+            lst = self._sanctions_list or SanctionsList.bundled()  # a load error fails closed (held)
+            hits = [who for who, a in (("recipient", recipient), ("sender", self.wallet)) if a and a in lst]
+            if hits:
+                return GateDecision(
+                    REJECT, ("ofac_sdn_match",) + tuple(f"sanctioned_{h}" for h in hits),
+                    f"The {' and '.join(hits)} address is on the OFAC SDN list ({lst.describe()}). Do not pay; "
+                    "refer it to your compliance process. This is an exact address match, not a "
+                    "compliance determination.", intent)
         if recipient in self.blocked:
             return stop(REJECT, "blocked_recipient", f"Recipient {recipient} is blocked.")
         if not _ADDRESS_RE.match(recipient) or recipient == _ZERO_ADDRESS:
@@ -320,6 +371,8 @@ class PaymentGate:
                         f"Recipient {intent.recipient!r} is not a valid 0x address.")
         if self.wallet and recipient == self.wallet:
             return stop(REJECT, "self_transfer", "Recipient is the agent's own wallet.")
+        if claims:
+            return claims_hold()
         if self.allowed is not None and recipient not in self.allowed:
             return stop(HOLD, "recipient_not_allowlisted", f"Recipient {recipient} is not on the allowlist.")
 
@@ -331,6 +384,10 @@ class PaymentGate:
             return self._finish(intent, args, Decimal(0), ("non_usdc_amount_unchecked",))
 
         assert intent.amount is not None
+        if intent.amount * (Decimal(10) ** USDC_DECIMALS) < 1:
+            return stop(REJECT, "amount_below_smallest_unit",
+                        f"{intent.amount} USDC is below the smallest USDC unit (0.000001) and rounds to zero "
+                        "on-chain, so it can never execute.")
         if intent.amount > self.max_amount:
             return stop(HOLD, "over_payment_limit",
                         f"{intent.amount} USDC is over the {self.max_amount} USDC per-payment limit.")

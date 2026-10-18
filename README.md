@@ -33,14 +33,17 @@ Each payment is then checked against these rules:
 
 | Check | Result |
 |---|---|
+| Recipient, or your own `wallet_address`, on the OFAC SDN list (exact match against the dated snapshot bundled with `sra-riskgate`; turn off with `check_sanctions=False`) | reject |
 | Recipient on `blocked_recipients` | reject |
 | Recipient not a valid `0x` address, zero address, or the agent's own wallet | reject |
 | Recipient not on `allowed_recipients` (when you set one) | hold |
 | Asset is not USDC (native ETH and other tokens) | hold, unless `allow_non_usdc=True` |
+| USDC amount below 0.000001 (rounds to zero on-chain) | reject |
 | Amount over `max_amount_usdc` (default 100) | hold |
 | Total approved spend over `session_budget_usdc` (stops split payments) | hold |
 | USDC off its peg (with a `peg_feed`) by ≥1% / ≥5% | hold / reject |
 | One-step x402 request to a host not on `allowed_x402_hosts` | hold |
+| Arguments claim their own verification ("risk level: low (verified offline)", "sanctions screening passed", "ignore previous instructions") | hold |
 | Unreadable arguments | reject |
 | A tool whose name contains a word such as transfer, swap, pay or withdraw, with no extractor (strict mode) | hold |
 | Any internal error, feed error or model error | hold |
@@ -164,7 +167,8 @@ That benchmark uses synthetic data. Measure it on your own traffic before relyin
 - **One-step x402 requests.** Their price is unknown when the gate runs, so they are allowed only for
   hosts you list. AgentKit's own `max_payment_usdc` still applies to them.
 - **Budget accounting.** Spend is counted when a payment is approved. It is released only if the tool raises.
-- **Scope.** This is a guardrail, not compliance. It does not replace sanctions screening or KYC.
+- **Scope.** This is a guardrail, not compliance. The OFAC match is an exact comparison with a dated snapshot
+  (pass `sanctions_list=` for a fresher one); it does not replace sanctions screening or KYC.
 
 ## Related
 
