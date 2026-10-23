@@ -17,7 +17,12 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Optional
 
+from . import __version__
 from .gate import PaymentIntent
+
+# Some proxies in front of hosted GPUs (Runpod's Pod proxy, for one) refuse Python's default
+# "Python-urllib/3.x" User-Agent with HTTP 403, so identify the client explicitly.
+USER_AGENT = f"langchain-sra-riskgate/{__version__}"
 
 PAYMENT_SYSTEM_PROMPT = (
     "You are a stablecoin payment risk gate. Evaluate the payment using the policy, the payload "
@@ -110,7 +115,8 @@ class OpenAICompatibleModelCheck:
         }).encode()
         req = urllib.request.Request(
             self.base_url + "/chat/completions", data=body,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"},
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}",
+                     "User-Agent": USER_AGENT},
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:

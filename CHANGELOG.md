@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+- Fixed: `OpenAICompatibleModelCheck` now sends a `User-Agent: langchain-sra-riskgate/<version>` header.
+  Some proxies in front of hosted GPUs refuse Python's default `Python-urllib/3.x` identity with HTTP 403;
+  a vLLM Pod on Runpod is one. Before this fix every model check against such a server was held with
+  `model_unavailable`, so nothing was unsafe, but the model check could not be used there.
+
 ## 0.3.0
 - **OFAC SDN address match:** payments to a recipient, or from your `wallet_address`, on the OFAC SDN list
   are **rejected** (flags `ofac_sdn_match`, `sanctioned_recipient` / `sanctioned_sender`). It is an exact,
