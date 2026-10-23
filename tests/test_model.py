@@ -21,6 +21,7 @@ def server():
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             state["requests"].append((self.path, body))
+            state["user_agent"] = self.headers["User-Agent"]
             out = json.dumps({"choices": [{"message": {"content": state["reply"]}}]}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -87,3 +88,11 @@ def test_non_http_base_url_refused(url):
     from langchain_sra_riskgate import OpenAICompatibleModelCheck
     with pytest.raises(ValueError):
         OpenAICompatibleModelCheck(lambda i, a: ({}, {}, {}), base_url=url)
+
+
+def test_sends_its_own_user_agent(server):
+    # Runpod's Pod proxy returns 403 to Python's default "Python-urllib/3.x" User-Agent.
+    import langchain_sra_riskgate
+    check = OpenAICompatibleModelCheck(builder, base_url=server["url"])
+    PaymentGate(model_check=check).evaluate("ERC20ActionProvider_transfer", ARGS)
+    assert server["user_agent"] == f"langchain-sra-riskgate/{langchain_sra_riskgate.__version__}"

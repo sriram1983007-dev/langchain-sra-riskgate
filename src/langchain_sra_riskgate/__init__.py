@@ -1,9 +1,10 @@
 """Stop AI agents from making unsafe stablecoin payments: SRA-RiskGate for LangChain."""
+__version__ = "0.3.1"  # set before the imports below: model.py reads it
+
 from .gate import AGENTKIT_EXTRACTORS, GateDecision, PaymentGate, PaymentIntent
 from .model import OpenAICompatibleModelCheck
 from .tools import guard_tools
 
-__version__ = "0.3.0"
 
 __all__ = [
     "AGENTKIT_EXTRACTORS",
